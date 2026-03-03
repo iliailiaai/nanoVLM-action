@@ -28,8 +28,9 @@ def evaluate(model, loader, device):
     total_loss = 0.0
     total_n = 0
     correct = 0
+    print('eval...')
 
-    for batch in tqdm(loader):
+    for batch in loader:
 
         if batch["input_ids"].numel() == 0:
             continue
@@ -79,6 +80,18 @@ def main():
     full_ds = EmptyEnvActionDataset(
         jsonl_path=args.jsonl,
         images_root=args.images_root,
+        vlm_cfg=vlm_cfg,
+        prompt=args.prompt,
+        max_samples = 20_000
+    )
+
+    test_path_json = args.jsonl.replace("emptyenv_sft_dataset/dataset.jsonl", "emptyenv_sft_dataset/test_unseen_sizes/dataset.jsonl")
+    test_images_root = args.images_root.replace("emptyenv_sft_dataset", "emptyenv_sft_dataset/test_unseen_sizes/")
+    print(test_path_json, test_images_root)
+
+    test_unseen_ds = EmptyEnvActionDataset(
+        jsonl_path=test_path_json,
+        images_root=test_images_root,
         vlm_cfg=vlm_cfg,
         prompt=args.prompt,
         max_samples = 20_000
@@ -136,9 +149,17 @@ def main():
         generator=g,
     )
 
-    #train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=0, pin_memory=False, collate_fn=collator, drop_last=True)
-    #val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0, pin_memory=False, collate_fn=collator, drop_last=False)
-    
+    test_unseen_loader = DataLoader(
+        test_unseen_ds,
+        batch_size=args.batch_size,
+        collate_fn=collator,
+        num_workers=1,
+        pin_memory=True,
+        persistent_workers=False,
+        drop_last=True,
+        generator=g,
+    )
+
 
 
     # Optimizer: only MP + head
@@ -156,9 +177,10 @@ def main():
     t0 = time.time()
 
     # first 
-    print('eval...')
     val_loss, val_acc = evaluate(model, val_loader, device)
-    print(f"val_loss {val_loss:.4f} | val_acc {val_acc:.3f}")
+    unseen_sizes_loss, unseen_sizes_acc = evaluate(model, test_unseen_loader, device)
+    print(f"val_loss {val_loss:.4f} | val_acc {val_acc:.3f} ")
+    print(f"unseen_sizes_loss {unseen_sizes_loss:.4f} | unseen_sizes_acc {unseen_sizes_acc:.3f} ")
 
     while step < args.max_steps:
         for batch in tqdm(train_loader):
@@ -189,6 +211,9 @@ def main():
             if step % args.eval_every == 0:
                 val_loss, val_acc = evaluate(model, val_loader, device)
                 print(f"[VAL] step {step:6d} | val_loss {val_loss:.4f} | val_acc {val_acc:.3f}")
+                
+                unseen_sizes_loss, unseen_sizes_acc = evaluate(model, test_unseen_loader, device)
+                print(f"unseen_sizes_loss {unseen_sizes_loss:.4f} | unseen_sizes_acc {unseen_sizes_acc:.3f} ")
 
                 ckpt_dir = os.path.join(args.out, f"step_{step}")
                 model.save_pretrained(ckpt_dir)

@@ -1,3 +1,6 @@
 /teamspace/studios/this_studio/nanoVLM-action/nanoVLM/data/emptyenv_sft_dataset/
 nanoVLM-action/nanoVLM/data/emptyenv_sft_dataset/
 nanoVLM/data/emptyenv_sft_dataset/
+
+nanoVLM/checkpoints_emptyenv_action/
+nanoVLM-action/nanoVLM/checkpoints_emptyenv_action/
