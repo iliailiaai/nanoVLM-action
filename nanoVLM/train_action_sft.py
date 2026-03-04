@@ -176,6 +176,12 @@ def main():
     step = 0
     t0 = time.time()
 
+    create_step_0 = True
+    if create_step_0:
+        ckpt_dir = os.path.join(args.out, f"step_{step}")
+        model.save_pretrained(ckpt_dir)
+        print(f"Saved checkpoint to: {ckpt_dir}")
+    
     # first 
     val_loss, val_acc = evaluate(model, val_loader, device)
     unseen_sizes_loss, unseen_sizes_acc = evaluate(model, test_unseen_loader, device)

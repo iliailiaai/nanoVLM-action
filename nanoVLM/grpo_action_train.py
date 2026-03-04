@@ -386,7 +386,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--log_every", type=int, default=1, help="Log every N train iters")
 
-    parser.add_argument("--eval_every", type=int, default=10, help="Eval every N train iters")
+    parser.add_argument("--eval_every", type=int, default=1, help="Eval every N train iters")
     parser.add_argument("--eval_sizes", type=int, nargs="+", help="Unseen sizes to test every N train iters")
     parser.add_argument("--eval_episodes", type=int, default=50)
     parser.add_argument("--render_rollouts", action="store_true")
