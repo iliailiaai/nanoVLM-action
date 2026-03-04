@@ -93,7 +93,7 @@ class VisionLanguageActionModel(nn.Module):
 
         loss = None
         if action_labels is not None:
-            loss = F.cross_entropy(action_logits, action_labels)
+            loss = F.cross_entropy(action_logits, action_labels, label_smoothing=0.1)
 
         return action_logits, loss
 
