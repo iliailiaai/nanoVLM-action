@@ -268,6 +268,9 @@ def minibatches(items, minibatch_size, rng: np.random.Generator):
         j = idx[start:start + minibatch_size]
         yield [items[k] for k in j]
 
+use_amp = True
+scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+amp_dtype = torch.float16  # fp16
 
 def grpo_update(
     model,
@@ -310,31 +313,39 @@ def grpo_update(
 
     # Forward
     model.train()
-    logits, _ = model(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        images=[[im] for im in images],   # batch structure: list of packs
-        action_labels=None,
-    )  # [B,3]
+    with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+        logits, _ = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            images=[[im] for im in images],
+            action_labels=None,
+        )
+        logp = torch.log_softmax(logits, dim=-1)
+        logp_a = logp.gather(1, actions.view(-1, 1)).squeeze(1)
 
-    logp = torch.log_softmax(logits, dim=-1)  # [B,3]
-    logp_a = logp.gather(1, actions.view(-1, 1)).squeeze(1)  # [B]
+        ratio = torch.exp(logp_a - logp_old)
+        unclipped = ratio * adv
+        clipped = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv
+        policy_loss = -torch.mean(torch.minimum(unclipped, clipped))
 
-    ratio = torch.exp(logp_a - logp_old)  # [B]
-    unclipped = ratio * adv
-    clipped = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * adv
-    policy_loss = -torch.mean(torch.minimum(unclipped, clipped))
-
-    # Entropy bonus (encourage exploration)
-    probs = torch.softmax(logits, dim=-1)
-    entropy = -torch.sum(probs * torch.log(probs + 1e-12), dim=-1).mean()
-    loss = policy_loss - entropy_coef * entropy
+        probs = torch.softmax(logits, dim=-1)
+        entropy = -torch.sum(probs * torch.log(probs + 1e-12), dim=-1).mean()
+        loss = policy_loss - entropy_coef * entropy
 
     optimizer.zero_grad(set_to_none=True)
-    loss.backward()
-    if grad_clip is not None and grad_clip > 0:
-        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-    optimizer.step()
+
+    if use_amp:
+        scaler.scale(loss).backward()
+        if grad_clip is not None and grad_clip > 0:
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        scaler.step(optimizer)
+        scaler.update()
+    else:
+        loss.backward()
+        if grad_clip is not None and grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+        optimizer.step()
 
     # simple diagnostics
     approx_kl = torch.mean(logp_old - logp_a).item()
@@ -374,7 +385,9 @@ def main():
 
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--log_every", type=int, default=1, help="Log every N train iters")
-    parser.add_argument("--eval_every", type=int, default=10, help="Eval (greedy) every N train iters")
+
+    parser.add_argument("--eval_every", type=int, default=10, help="Eval every N train iters")
+    parser.add_argument("--eval_sizes", type=int, nargs="+", help="Unseen sizes to test every N train iters")
     parser.add_argument("--eval_episodes", type=int, default=50)
     parser.add_argument("--render_rollouts", action="store_true")
 
@@ -411,20 +424,21 @@ def main():
     optimizer = optim.AdamW(train_params, lr=args.lr, weight_decay=args.weight_decay)
 
     # Initial eval
-    print("Initial eval...")
-    with torch.no_grad():
-        eps = rollout_episodes(
-            model, vlm_cfg, tokenizer, image_processor, device,
-            sizes=args.sizes, prompt=args.prompt,
-            rollout_episodes=args.eval_episodes,
-            max_steps_per_ep=args.max_steps_per_ep,
-            temperature=args.temperature, greedy=False,
-            seed=args.seed + 10_000,
-            render=False,
-        )
-    sr0 = np.mean([e.success for e in eps])
-    ret0 = np.mean([e.ep_return for e in eps])
-    print(f"[EVAL0] success_rate={sr0:.3f} avg_return={ret0:.3f} avg_len={np.mean([e.ep_len for e in eps]):.1f}")
+    if False:
+        print("Initial eval...")
+        with torch.no_grad():
+            eps = rollout_episodes(
+                model, vlm_cfg, tokenizer, image_processor, device,
+                sizes=args.eval_sizes, prompt=args.prompt,
+                rollout_episodes=args.eval_episodes,
+                max_steps_per_ep=args.max_steps_per_ep,
+                temperature=args.temperature, greedy=False,
+                seed=args.seed + 10_000,
+                render=False,
+            )
+        sr0 = np.mean([e.success for e in eps])
+        ret0 = np.mean([e.ep_return for e in eps])
+        print(f"[EVAL0] success_rate={sr0:.3f} avg_return={ret0:.3f} avg_len={np.mean([e.ep_len for e in eps]):.1f}")
 
     t0 = time.time()
     rng = np.random.default_rng(args.seed)
@@ -479,21 +493,22 @@ def main():
                 f"{dt:.1f}s"
             )
 
-        # 4) Periodic greedy eval + checkpoint
+        # 4) Periodic eval + checkpoint
         if it % args.eval_every == 0:
-            with torch.no_grad():
-                eps = rollout_episodes(
-                    model, vlm_cfg, tokenizer, image_processor, device,
-                    sizes=args.sizes, prompt=args.prompt,
-                    rollout_episodes=args.eval_episodes,
-                    max_steps_per_ep=args.max_steps_per_ep,
-                    temperature=args.temperature, greedy=False,
-                    seed=args.seed + 50_000 + it,
-                    render=False,
-                )
-            sr = np.mean([e.success for e in eps])
-            ret = np.mean([e.ep_return for e in eps])
-            print(f"[EVAL] it {it:4d} | success_rate={sr:.3f} avg_return={ret:.3f} avg_len={np.mean([e.ep_len for e in eps]):.1f}")
+            if False:
+                with torch.no_grad():
+                    eps = rollout_episodes(
+                        model, vlm_cfg, tokenizer, image_processor, device,
+                        sizes=args.eval_sizes, prompt=args.prompt,
+                        rollout_episodes=args.eval_episodes,
+                        max_steps_per_ep=args.max_steps_per_ep,
+                        temperature=args.temperature, greedy=False,
+                        seed=args.seed + 50_000 + it,
+                        render=False,
+                    )
+                sr = np.mean([e.success for e in eps])
+                ret = np.mean([e.ep_return for e in eps])
+                print(f"[EVAL] it {it:4d} | success_rate={sr:.3f} avg_return={ret:.3f} avg_len={np.mean([e.ep_len for e in eps]):.1f}")
 
             ckpt_path = save_ckpt(model, args.out, f"it_{it}")
             print("Saved checkpoint:", ckpt_path)
