@@ -182,6 +182,7 @@ def main():
     print(f"val_loss {val_loss:.4f} | val_acc {val_acc:.3f} ")
     print(f"unseen_sizes_loss {unseen_sizes_loss:.4f} | unseen_sizes_acc {unseen_sizes_acc:.3f} ")
 
+
     while step < args.max_steps:
         for batch in tqdm(train_loader):
             if step >= args.max_steps:

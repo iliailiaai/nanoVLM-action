@@ -20,6 +20,12 @@ DEFAULT_PROMPT = (
     "Answer with the best next action."
 )
 
+REASONING_PROMPT = (
+    "You see an agent in a grid world. "
+    "In one short sentence describe where the green square is relative to the agent "
+    "and whether the agent can see it. "
+)
+
 
 class EmptyEnvActionDataset(Dataset):
     """
