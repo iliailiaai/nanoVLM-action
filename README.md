@@ -1,6 +1,6 @@
 # Multimodal VLM Agent for Goal-Oriented Navigation
 
-Репозиторий содержит реализацию мультимодального агента на основе Vision-Language Model (VLM) и бибилиотеки nanoVLM (HuggingFace) для задачи навигации в двумерной grid-среде MiniGrid.
+Репозиторий содержит мультимодального RL-агента на основе Vision-Language Model (VLM) и бибилиотеки nanoVLM (HuggingFace) для навигации в двумерной grid-среде MiniGrid.
 
 Агент получает изображение состояния среды и текстовый промпт задачи и должен выбрать действие, которое приближает его к цели. В работе исследуется способность таких моделей обобщать стратегию навигации на пространства, размеры которых не встречались во время обучения.
 
@@ -26,8 +26,8 @@
 - `grpo_action_train.py` - GRPO обучение
 - `grpo_train_lora.py` - обучение text + action модели с помощью LoRA
 - `data/action_collator.py` - сборщик для action
-- `vision_language_model_action.py` - основная модель для SFT/GRPO обучения
-- `vl_reasoning_action_model.py` - text + action модель
+- `models/vision_language_model_action.py` - основная модель для SFT/GRPO обучения
+- `models/vl_reasoning_action_model.py` - text + action модель
 ---
 
 # Установка
